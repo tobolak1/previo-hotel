@@ -37,9 +37,9 @@ EQC_CONFIG = {
     'bc_url': 'https://api.previo.app/eqc1/bc',  # BookingConfirmation
 }
 
-# XML namespaces pro EQC
-EQC_NAMESPACE = "http://www.expediaconnect.com/EQC/AR/2011/06"
-EQC_BR_NAMESPACE = "http://www.expediaconnect.com/EQC/BR/2014/01"
+# XML namespaces pro EQC (Previo používá verzi 2007/02)
+EQC_NAMESPACE = "http://www.expediaconnect.com/EQC/AR/2007/02"
+EQC_BR_NAMESPACE = "http://www.expediaconnect.com/EQC/BR/2007/02"
 
 
 class PrevioEqcClient:
@@ -94,31 +94,38 @@ class PrevioEqcClient:
         """
         Vytvoří XML požadavek pro AvailRateUpdate.
 
-        Formát podle EQC specifikace (Expedia QuickConnect):
+        Formát podle Previo EQC specifikace (verze 2007/02):
 
-        <AvailRateUpdateRQ xmlns="...">
+        <AvailRateUpdateRQ xmlns="http://www.expediaconnect.com/EQC/AR/2007/02">
             <Authentication username="..." password="..."/>
             <Hotel id="..."/>
-            <AvailRateUpdate>
-                <DateRange from="2025-01-15" to="2025-01-15"/>
-                <RoomType id="...">
-                    <RatePlan id="..." closed="false">
-                        <Rate currency="CZK">
-                            <PerDay rate="1500.00"/>
-                        </Rate>
-                    </RatePlan>
-                </RoomType>
-            </AvailRateUpdate>
+            <DateRange from="2025-01-15" to="2025-01-15"/>
+            <RoomType id="...">
+                <RatePlan id="...">
+                    <Rate currency="CZK">
+                        <PerOccupancy rate="1500.00" occupancy="1"/>
+                        <PerOccupancy rate="2000.00" occupancy="2"/>
+                    </Rate>
+                </RatePlan>
+            </RoomType>
         </AvailRateUpdateRQ>
 
         Args:
             room_type_id: ID typu pokoje (room_kind_id)
             rate_plan_id: ID cenového plánu
-            updates: Seznam aktualizací [{date, rate, currency, closed}, ...]
+            updates: Seznam aktualizací [{date, rate, occupancy_rates, currency, closed}, ...]
+                     occupancy_rates: {1: 1500, 2: 2000, 3: 2500} - ceny podle obsazenosti
 
         Returns:
             str: XML požadavek
         """
+        # Pro každý update vytvoříme samostatný request (Previo nepodporuje více změn)
+        # Vezmeme první update
+        if not updates:
+            return ""
+
+        update = updates[0]
+
         # Root element s namespace
         root = ET.Element('AvailRateUpdateRQ')
         root.set('xmlns', EQC_NAMESPACE)
@@ -132,52 +139,71 @@ class PrevioEqcClient:
         hotel = ET.SubElement(root, 'Hotel')
         hotel.set('id', self.hotel_id)
 
-        # Seskupit updates podle data pro efektivitu
-        for update in updates:
-            avail_rate_update = ET.SubElement(root, 'AvailRateUpdate')
+        # DateRange - přímo pod root
+        date_range = ET.SubElement(root, 'DateRange')
+        date_str = update.get('date')
+        if isinstance(date_str, date):
+            date_str = date_str.strftime('%Y-%m-%d')
+        date_range.set('from', date_str)
+        date_range.set('to', date_str)
 
-            # DateRange
-            date_range = ET.SubElement(avail_rate_update, 'DateRange')
-            date_str = update.get('date')
-            if isinstance(date_str, date):
-                date_str = date_str.strftime('%Y-%m-%d')
-            date_range.set('from', date_str)
-            date_range.set('to', date_str)
+        # RoomType - přímo pod root
+        room_type = ET.SubElement(root, 'RoomType')
+        room_type.set('id', str(room_type_id))
 
-            # RoomType
-            room_type = ET.SubElement(avail_rate_update, 'RoomType')
-            room_type.set('id', str(room_type_id))
+        # RatePlan
+        rate_plan = ET.SubElement(room_type, 'RatePlan')
+        rate_plan.set('id', str(rate_plan_id))
 
-            # RatePlan
-            rate_plan = ET.SubElement(room_type, 'RatePlan')
-            rate_plan.set('id', str(rate_plan_id))
-            rate_plan.set('closed', 'true' if update.get('closed', False) else 'false')
+        # Rate s PerOccupancy (Previo používá OCCUPANCY_PRICING)
+        if 'rate' in update or 'occupancy_rates' in update:
+            rate_elem = ET.SubElement(rate_plan, 'Rate')
+            rate_elem.set('currency', update.get('currency', 'CZK'))
 
-            # Rate
-            if 'rate' in update:
-                rate_elem = ET.SubElement(rate_plan, 'Rate')
-                rate_elem.set('currency', update.get('currency', 'CZK'))
-
-                per_day = ET.SubElement(rate_elem, 'PerDay')
-                per_day.set('rate', f"{update['rate']:.2f}")
+            # Pokud máme occupancy_rates, použijeme je
+            occupancy_rates = update.get('occupancy_rates', {})
+            if occupancy_rates:
+                for occupancy, rate_value in sorted(occupancy_rates.items()):
+                    per_occ = ET.SubElement(rate_elem, 'PerOccupancy')
+                    per_occ.set('rate', f"{rate_value:.2f}")
+                    per_occ.set('occupancy', str(occupancy))
+            elif 'rate' in update:
+                # Fallback - použijeme stejnou cenu pro 1 a 2 osoby
+                rate_value = update['rate']
+                per_occ1 = ET.SubElement(rate_elem, 'PerOccupancy')
+                per_occ1.set('rate', f"{rate_value:.2f}")
+                per_occ1.set('occupancy', '1')
+                per_occ2 = ET.SubElement(rate_elem, 'PerOccupancy')
+                per_occ2.set('rate', f"{rate_value:.2f}")
+                per_occ2.set('occupancy', '2')
 
         # Převod na string s XML deklarací
-        xml_string = '<?xml version="1.0" encoding="UTF-8"?>\n'
+        xml_string = '<?xml version="1.0" encoding="utf-8"?>\n'
         xml_string += ET.tostring(root, encoding='unicode')
 
         return xml_string
 
     def _create_br_request(
         self,
-        status: str = 'pending',
-        older_than_seconds: int = None
+        nb_days_in_past: int = 1,
+        booking_id: str = None
     ) -> str:
         """
         Vytvoří XML požadavek pro BookingRetrieval.
 
+        Formát podle Previo EQC specifikace (verze 2007/02):
+
+        <BookingRetrievalRQ xmlns="http://www.expediaconnect.com/EQC/BR/2007/02">
+            <Authentication username="..." password="..." />
+            <Hotel id="..." />
+            <ParamSet>
+                <NbDaysInPast>1</NbDaysInPast>
+            </ParamSet>
+        </BookingRetrievalRQ>
+
         Args:
-            status: Status rezervací ('pending', 'confirmed', 'cancelled')
-            older_than_seconds: Omezit na rezervace starší než X sekund
+            nb_days_in_past: Počet dní zpět pro vyhledávání rezervací
+            booking_id: Konkrétní ID rezervace (volitelné)
 
         Returns:
             str: XML požadavek
@@ -197,14 +223,14 @@ class PrevioEqcClient:
         # ParamSet
         param_set = ET.SubElement(root, 'ParamSet')
 
-        status_elem = ET.SubElement(param_set, 'Status')
-        status_elem.text = status
+        if booking_id:
+            booking_elem = ET.SubElement(param_set, 'Booking')
+            booking_elem.set('id', str(booking_id))
+        else:
+            nb_days = ET.SubElement(param_set, 'NbDaysInPast')
+            nb_days.text = str(nb_days_in_past)
 
-        if older_than_seconds:
-            older_than = ET.SubElement(param_set, 'OlderThanSeconds')
-            older_than.text = str(older_than_seconds)
-
-        xml_string = '<?xml version="1.0" encoding="UTF-8"?>\n'
+        xml_string = '<?xml version="1.0" encoding="utf-8"?>\n'
         xml_string += ET.tostring(root, encoding='unicode')
 
         return xml_string
@@ -420,24 +446,25 @@ class PrevioEqcClient:
 
         return result
 
-    def get_reservations(self, status: str = 'pending') -> Dict:
+    def get_reservations(self, nb_days_in_past: int = 1, booking_id: str = None) -> Dict:
         """
         Stáhne rezervace z Previo.
 
         Args:
-            status: Status rezervací ('pending', 'confirmed', 'cancelled')
+            nb_days_in_past: Počet dní zpět pro vyhledávání rezervací
+            booking_id: Konkrétní ID rezervace (volitelné)
 
         Returns:
             Dict: Rezervace
         """
-        logger.info(f"Stahuji rezervace se statusem: {status}")
+        logger.info(f"Stahuji rezervace za posledních {nb_days_in_past} dní")
 
-        xml_request = self._create_br_request(status=status)
+        xml_request = self._create_br_request(nb_days_in_past=nb_days_in_past, booking_id=booking_id)
         success, response = self._send_request(self.br_url, xml_request)
 
         result = {
             'success': success,
-            'status_filter': status,
+            'nb_days_in_past': nb_days_in_past,
             'reservations': []
         }
 
@@ -496,7 +523,7 @@ class PrevioEqcClient:
 
         # Test BR endpoint (méně invazivní než AR)
         try:
-            xml_request = self._create_br_request(status='pending')
+            xml_request = self._create_br_request(nb_days_in_past=1)
             success, response = self._send_request(self.br_url, xml_request)
 
             result['br_test'] = {
