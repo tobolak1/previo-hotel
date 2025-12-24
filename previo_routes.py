@@ -13,15 +13,148 @@ previo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "previo")
 if previo_path not in sys.path:
     sys.path.insert(0, previo_path)
 
-from flask import Blueprint, render_template, jsonify, request, Response
+from flask import Blueprint, jsonify, request, Response
 from datetime import datetime, date, timedelta
 import csv
 import io
 import xml.etree.ElementTree as ET
 
-previo_bp = Blueprint("previo", __name__,
-                      url_prefix="/previo",
-                      template_folder="../previo/web/templates")
+previo_bp = Blueprint("previo", __name__, url_prefix="/previo")
+
+# ==============================================================================
+# INLINE HTML TEMPLATES
+# ==============================================================================
+
+BASE_STYLE = """
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    .header { background: #2c3e50; color: white; padding: 20px; margin-bottom: 20px; }
+    .header h1 { font-size: 24px; }
+    .nav { display: flex; gap: 20px; margin-top: 10px; }
+    .nav a { color: #ecf0f1; text-decoration: none; padding: 8px 16px; border-radius: 4px; }
+    .nav a:hover, .nav a.active { background: #34495e; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .card h2 { margin-bottom: 15px; color: #2c3e50; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; }
+    .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-success { background: #27ae60; color: white; }
+    .btn-danger { background: #e74c3c; color: white; }
+    .btn-primary { background: #3498db; color: white; }
+    .btn:hover { opacity: 0.9; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .badge-up { background: #27ae60; color: white; }
+    .badge-down { background: #e74c3c; color: white; }
+    .badge-neutral { background: #95a5a6; color: white; }
+    .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .status-pending { background: #f39c12; color: white; }
+    .status-approved { background: #27ae60; color: white; }
+    .status-rejected { background: #e74c3c; color: white; }
+    .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filters select, .filters input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+    .kpi-card { background: white; padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .kpi-value { font-size: 32px; font-weight: bold; color: #2c3e50; }
+    .kpi-label { color: #7f8c8d; margin-top: 5px; }
+    .alert { padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+    .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .loading { text-align: center; padding: 40px; color: #7f8c8d; }
+</style>
+"""
+
+def render_page(title, content, active_page=""):
+    nav_items = [
+        ("/previo/", "Dashboard", "dashboard"),
+        ("/previo/recommendations", "Doporuceni", "recommendations"),
+        ("/previo/settings", "Nastaveni", "settings"),
+    ]
+    nav_html = ""
+    for url, label, page in nav_items:
+        active = "active" if page == active_page else ""
+        nav_html += f'<a href="{url}" class="{active}">{label}</a>'
+
+    return f"""<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - Previo Hotel</title>
+    {BASE_STYLE}
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Previo Hotel - Cenovy Optimalizator</h1>
+            <nav class="nav">{nav_html}</nav>
+        </div>
+    </div>
+    <div class="container">
+        {content}
+    </div>
+    <script>
+        async function approveRecommendation(recId, change) {{
+            if (!confirm('Opravdu chcete schvalit tuto zmenu ceny?')) return;
+            try {{
+                const response = await fetch('/previo/api/recommendations/' + recId + '/decide', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{decision: 'approved', user_change: change}})
+                }});
+                const result = await response.json();
+                if (result.success) {{
+                    alert('Cena byla uspesne zmenena!');
+                    location.reload();
+                }} else {{
+                    alert('Chyba: ' + (result.error || 'Neznama chyba'));
+                }}
+            }} catch (e) {{
+                alert('Chyba: ' + e.message);
+            }}
+        }}
+
+        async function rejectRecommendation(recId) {{
+            if (!confirm('Opravdu chcete zamitnout toto doporuceni?')) return;
+            try {{
+                const response = await fetch('/previo/api/recommendations/' + recId + '/decide', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{decision: 'rejected'}})
+                }});
+                const result = await response.json();
+                if (result.success) {{
+                    location.reload();
+                }}
+            }} catch (e) {{
+                alert('Chyba: ' + e.message);
+            }}
+        }}
+
+        async function applyAllForDays(days) {{
+            if (!confirm('Opravdu chcete aplikovat vsechna doporuceni na ' + days + ' dni dopredu?')) return;
+            try {{
+                const response = await fetch('/previo/api/eqc/apply-recommendations', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{days_ahead: days}})
+                }});
+                const result = await response.json();
+                if (result.success) {{
+                    alert('Aplikovano ' + result.applied_count + ' zmen!');
+                    location.reload();
+                }} else {{
+                    alert('Chyba: ' + (result.error || 'Neznama chyba'));
+                }}
+            }} catch (e) {{
+                alert('Chyba: ' + e.message);
+            }}
+        }}
+    </script>
+</body>
+</html>"""
 
 # Konfigurace
 SUPABASE_URL = "https://kchbzmncwdidjzxnegck.supabase.co"
@@ -119,62 +252,166 @@ def dashboard():
     except Exception as e:
         kpi = {"occupancy": "N/A", "error": str(e)}
 
-    return render_template("dashboard.html",
-                          kpi=kpi,
-                          arrivals=[],
-                          departures=[],
-                          hotel_name=HOTEL["name"],
-                          now=datetime.now())
+    content = f"""
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-value">{kpi.get('occupancy', 'N/A')}</div>
+            <div class="kpi-label">Obsazenost dnes</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-value">{kpi.get('arrivals', 0)}</div>
+            <div class="kpi-label">Prijezdy dnes</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-value">{kpi.get('departures', 0)}</div>
+            <div class="kpi-label">Odjezdy dnes</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-value">{kpi.get('revenue', 'N/A')}</div>
+            <div class="kpi-label">Trzba dnes</div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+        <h2>Rychle akce</h2>
+        <p>Aplikovat cenova doporuceni:</p>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button class="btn btn-primary" onclick="applyAllForDays(1)">Na zitra</button>
+            <button class="btn btn-primary" onclick="applyAllForDays(7)">Na tyden</button>
+            <button class="btn btn-primary" onclick="applyAllForDays(14)">Na 14 dni</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>API Endpointy</h2>
+        <ul style="list-style: none; padding: 0;">
+            <li style="padding: 8px 0;"><a href="/previo/api/recommendations">/api/recommendations</a> - JSON doporuceni</li>
+            <li style="padding: 8px 0;"><a href="/previo/api/export/csv">/api/export/csv</a> - Export CSV</li>
+            <li style="padding: 8px 0;"><a href="/previo/api/eqc/test">/api/eqc/test</a> - Test EQC API</li>
+            <li style="padding: 8px 0;"><a href="/previo/api/status">/api/status</a> - API Status</li>
+        </ul>
+    </div>
+    """
+    return render_page("Dashboard", content, "dashboard")
 
 @previo_bp.route("/recommendations")
 def recommendations():
-    """Stranka s cenovymi doporucennimi (z predpocitanych dat)."""
+    """Stranka s cenovymi doporucennimi."""
     try:
         data = get_precomputed_recommendations()
-        comparison = {}  # Preskocit - zpomaluje
-        predictions = []
-        stats = {"historical_days": data.get("daily_count", 0) * 15}
     except Exception as e:
         data = {"recommendations": [], "daily": [], "error": str(e)}
-        comparison = {}
-        predictions = []
-        stats = {}
 
-    return render_template("recommendations.html",
-                          data=data,
-                          comparison=comparison,
-                          predictions=predictions,
-                          stats=stats,
-                          hotel_name=HOTEL["name"],
-                          now=datetime.now())
+    recs = data.get("recommendations", [])
+
+    # Filtrovat jen ty co maji zmenu
+    active_recs = [r for r in recs if r.get("recommendation_type") != "no_change"]
+
+    rows_html = ""
+    for rec in active_recs[:50]:  # Limit na 50
+        rec_id = f"{rec.get('date')}_{rec.get('room_kind_id', 'daily')}"
+        change = rec.get("recommended_change", 0)
+        badge_class = "badge-up" if change > 0 else "badge-down" if change < 0 else "badge-neutral"
+
+        rows_html += f"""
+        <tr>
+            <td>{rec.get('date', '')}</td>
+            <td>{rec.get('weekday_name', '')}</td>
+            <td>{rec.get('room_name', 'Vsechny pokoje')}</td>
+            <td>{rec.get('current_price', 'N/A')} CZK</td>
+            <td><span class="badge {badge_class}">{change:+.0f}%</span></td>
+            <td>{rec.get('new_price', 'N/A')} CZK</td>
+            <td>{rec.get('reason', '')[:50]}</td>
+            <td style="text-align: right;">
+                <button class="btn btn-success" onclick="approveRecommendation('{rec_id}', {change})">Schvalit</button>
+                <button class="btn btn-danger" onclick="rejectRecommendation('{rec_id}')">Zamitnout</button>
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="card">
+        <h2>Hromadna aplikace</h2>
+        <p>Aplikovat vsechna doporuceni:</p>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button class="btn btn-primary" onclick="applyAllForDays(1)">Na zitra</button>
+            <button class="btn btn-primary" onclick="applyAllForDays(7)">Na tyden</button>
+            <button class="btn btn-primary" onclick="applyAllForDays(14)">Na 14 dni</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Cenova doporuceni ({len(active_recs)})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Datum</th>
+                    <th>Den</th>
+                    <th>Pokoj</th>
+                    <th>Aktualni cena</th>
+                    <th>Zmena</th>
+                    <th>Nova cena</th>
+                    <th>Duvod</th>
+                    <th style="text-align: right;">Akce</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html if rows_html else '<tr><td colspan="8" style="text-align: center;">Zadna doporuceni</td></tr>'}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Export</h2>
+        <a href="/previo/api/export/csv" class="btn btn-primary">Stahnout CSV</a>
+        <a href="/previo/api/export/json" class="btn btn-primary">Stahnout JSON</a>
+    </div>
+    """
+    return render_page("Cenova doporuceni", content, "recommendations")
 
 @previo_bp.route("/occupancy")
 def occupancy():
-    """Analyza obsazenosti."""
-    try:
-        data = get_occupancy_data()
-    except Exception:
-        data = {"days": [], "summary": {}}
-    return render_template("occupancy.html", data=data, hotel_name=HOTEL["name"], now=datetime.now())
+    """Analyza obsazenosti - redirect na API."""
+    return jsonify({"message": "Pouzijte /previo/api/recommendations pro data", "redirect": "/previo/"})
 
 @previo_bp.route("/prices")
 def prices():
-    """Cenova analyza."""
-    try:
-        data = get_price_data()
-    except Exception:
-        data = {"rooms": [], "suggestions": []}
-    return render_template("prices.html", data=data, hotel_name=HOTEL["name"], now=datetime.now())
+    """Cenova analyza - redirect na API."""
+    return jsonify({"message": "Pouzijte /previo/api/prices pro data", "redirect": "/previo/"})
 
 @previo_bp.route("/settings")
 def settings():
     """Nastaveni systemu."""
     api_status = test_api_connection()
-    return render_template("settings.html",
-                          api_status=api_status,
-                          config={"hotel": HOTEL},
-                          hotel_name=HOTEL["name"],
-                          now=datetime.now())
+
+    content = f"""
+    <div class="card">
+        <h2>API Status</h2>
+        <table>
+            <tr><td>REST API</td><td>{'✅ OK' if api_status.get('rest_api') else '❌ Error'}</td></tr>
+            <tr><td>XML API (ceny)</td><td>{'✅ OK' if api_status.get('xml_api') else '❌ Error'}</td></tr>
+            <tr><td>EQC API (zmena cen)</td><td>{'✅ OK' if api_status.get('eqc_api') else '❌ ' + api_status.get('eqc_message', 'Error')}</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Konfigurace</h2>
+        <table>
+            <tr><td>Hotel</td><td>{HOTEL['name']}</td></tr>
+            <tr><td>Hotel ID</td><td>{HOTEL['id']}</td></tr>
+            <tr><td>Mena</td><td>{HOTEL['currency']}</td></tr>
+            <tr><td>Pocet pokoju</td><td>{api_status.get('rooms_count', 0)}</td></tr>
+            <tr><td>Pocet cen</td><td>{api_status.get('prices_count', 0)}</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Akce</h2>
+        <p><a href="/previo/api/eqc/test" class="btn btn-primary">Test EQC API</a></p>
+        <p style="margin-top: 10px;"><a href="/previo/api/precompute" class="btn btn-primary">Prepocitat doporuceni</a></p>
+    </div>
+    """
+    return render_page("Nastaveni", content, "settings")
 
 # ==============================================================================
 # API ENDPOINTY
@@ -381,19 +618,46 @@ def api_eqc_apply():
 @previo_bp.route("/api/eqc/apply-recommendations", methods=["POST"])
 def api_eqc_apply_recommendations():
     """
-    Aplikuje vsechna schvalena doporuceni do Previo.
+    Aplikuje doporuceni do Previo.
 
-    Request body:
+    Request body (varianta 1 - konkretni doporuceni):
     {
         "recommendations": [
             {"id": "2025-01-20_640240", "change_percent": -10},
             {"id": "2025-01-21_640238", "change_percent": +5}
         ]
     }
+
+    Request body (varianta 2 - vsechna na X dni):
+    {
+        "days_ahead": 7
+    }
     """
     try:
         data = request.get_json()
+        days_ahead = data.get("days_ahead")
         recommendations = data.get("recommendations", [])
+
+        # Pokud je zadano days_ahead, nacist doporuceni automaticky
+        if days_ahead and not recommendations:
+            rec_data = get_precomputed_recommendations()
+            today = date.today()
+            max_date = today + timedelta(days=days_ahead)
+
+            for rec in rec_data.get("recommendations", []):
+                if rec.get("recommendation_type") == "no_change":
+                    continue
+
+                rec_date_str = rec.get("date")
+                if rec_date_str:
+                    rec_date = datetime.strptime(rec_date_str, "%Y-%m-%d").date()
+                    if today <= rec_date <= max_date:
+                        room_kind_id = rec.get("room_kind_id")
+                        if room_kind_id:
+                            recommendations.append({
+                                "id": f"{rec_date_str}_{room_kind_id}",
+                                "change_percent": rec.get("recommended_change", 0)
+                            })
 
         if not recommendations:
             return jsonify({
