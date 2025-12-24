@@ -207,11 +207,11 @@ def get_precomputed_recommendations():
 
         # Fallback - pokud neni v DB, pocitat (pomale)
         print("Predpocitana data nenalezena, pocitam...")
-        return get_recommendations_data()
+        return get_recommendations_with_prices()
 
     except Exception as e:
         print(f"Error loading precomputed: {e}")
-        return {"recommendations": [], "daily": [], "count": 0, "error": str(e)}
+        return {"recommendations_with_prices": [], "daily": [], "count": 0, "error": str(e)}
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -306,9 +306,10 @@ def dashboard():
 
 @previo_bp.route("/recommendations")
 def recommendations():
-    """Stranka s cenovymi doporucennimi."""
+    """Stranka s cenovymi doporucennimi - bere z cache."""
     try:
-        data = get_recommendations_with_prices()
+        data = get_precomputed_recommendations()
+        # Cache obsahuje recommendations_with_prices (novy format s cenami)
         recs = data.get("recommendations_with_prices", [])
     except Exception as e:
         data = {"recommendations_with_prices": [], "error": str(e)}
@@ -730,8 +731,8 @@ def api_eqc_apply_recommendations():
 def api_precompute():
     """Spusti prepocet doporuceni a ulozi do Supabase. Trva ~60-90 sekund."""
     try:
-        # Vypocitat data
-        data = get_recommendations_data()
+        # Vypocitat data VCETNE CEN
+        data = get_recommendations_with_prices()
 
         # Ulozit do Supabase
         headers = {
