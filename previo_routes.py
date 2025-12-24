@@ -1329,6 +1329,12 @@ def get_recommendations_with_prices():
 
     for rec in recommendations_data.get('recommendations', []):
         room_kind_id = rec.get('room_kind_id')
+        # Pretypovat na int pro porovnani s cenami
+        if room_kind_id:
+            try:
+                room_kind_id = int(room_kind_id)
+            except (ValueError, TypeError):
+                pass
         recommended_change = rec.get('recommended_change', 0)
 
         # Ziskat aktualni cenu pro dany pokoj
