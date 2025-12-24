@@ -247,6 +247,11 @@ def get_price_optimizer():
 @previo_bp.route("/test")
 def test_page():
     """Debug test page."""
+    return "Test page works! Version 2"
+
+@previo_bp.route("/test2")
+def test_page2():
+    """Debug test page 2."""
     return render_page("Test", "<p>Test page works!</p>", "dashboard")
 
 @previo_bp.route("/")
