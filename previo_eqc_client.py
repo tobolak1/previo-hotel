@@ -31,10 +31,10 @@ EQC_CONFIG = {
     'username': 'api@vincentluhacovice.cz',
     'password': '2P0QHc9XPph7',
     'hotel_id': '731186',
-    # URL endpoint pro EQC API - může být potřeba upravit
-    'ar_url': 'https://api.previo.app/eqc/ar',  # AvailRateUpdate
-    'br_url': 'https://api.previo.app/eqc/br',  # BookingRetrieval
-    'bc_url': 'https://api.previo.app/eqc/bc',  # BookingConfirmation
+    # URL endpoint pro EQC API (eqc1 = správná verze)
+    'ar_url': 'https://api.previo.app/eqc1/ar',  # AvailRateUpdate
+    'br_url': 'https://api.previo.app/eqc1/br',  # BookingRetrieval
+    'bc_url': 'https://api.previo.app/eqc1/bc',  # BookingConfirmation
 }
 
 # XML namespaces pro EQC
