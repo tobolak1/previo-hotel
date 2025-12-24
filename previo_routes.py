@@ -308,11 +308,11 @@ def dashboard():
 def recommendations():
     """Stranka s cenovymi doporucennimi."""
     try:
-        data = get_precomputed_recommendations()
+        data = get_recommendations_with_prices()
+        recs = data.get("recommendations_with_prices", [])
     except Exception as e:
-        data = {"recommendations": [], "daily": [], "error": str(e)}
-
-    recs = data.get("recommendations", [])
+        data = {"recommendations_with_prices": [], "error": str(e)}
+        recs = []
 
     # Filtrovat jen ty co maji zmenu
     active_recs = [r for r in recs if r.get("recommendation_type") != "no_change"]
