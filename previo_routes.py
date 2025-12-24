@@ -384,13 +384,15 @@ def settings():
     """Nastaveni systemu."""
     api_status = test_api_connection()
 
+    eqc_status = "OK" if api_status.get('eqc_api') else (api_status.get('eqc_message') or 'Error')
+
     content = f"""
     <div class="card">
         <h2>API Status</h2>
         <table>
-            <tr><td>REST API</td><td>{'✅ OK' if api_status.get('rest_api') else '❌ Error'}</td></tr>
-            <tr><td>XML API (ceny)</td><td>{'✅ OK' if api_status.get('xml_api') else '❌ Error'}</td></tr>
-            <tr><td>EQC API (zmena cen)</td><td>{'✅ OK' if api_status.get('eqc_api') else '❌ ' + api_status.get('eqc_message', 'Error')}</td></tr>
+            <tr><td>REST API</td><td>{'OK' if api_status.get('rest_api') else 'Error'}</td></tr>
+            <tr><td>XML API (ceny)</td><td>{'OK' if api_status.get('xml_api') else 'Error'}</td></tr>
+            <tr><td>EQC API (zmena cen)</td><td>{eqc_status}</td></tr>
         </table>
     </div>
 
